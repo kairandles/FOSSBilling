@@ -115,6 +115,30 @@ abstract class Server_Manager
     }
 
     /**
+     * Whether {@see self::listPackages()} can enumerate the packages configured on the server.
+     * Managers that can should override this so the admin area offers to sync hosting plans from the server.
+     */
+    public static function supportsPackageSync(): bool
+    {
+        return false;
+    }
+
+    /**
+     * Lists the packages configured on the server so matching hosting plans can be created in FOSSBilling.
+     * Limits are in the units FOSSBilling stores (megabytes and counts). Use null for a limit the server does
+     * not impose (stored as "unlimited") and leave the key out when the server does not report it at all.
+     * `config` holds the hosting plan custom values that map the plan to the package.
+     *
+     * @return list<array{id: string, name: string, quota?: ?int, bandwidth?: ?int, max_addon?: ?int, max_sub?: ?int, max_park?: ?int, max_ftp?: ?int, max_sql?: ?int, max_pop?: ?int, config?: array<string, string>}>
+     *
+     * @throws Server_Exception when the server manager does not support listing packages
+     */
+    public function listPackages(): array
+    {
+        throw new Server_Exception('This server manager does not support :action:', [':action:' => __trans('listing packages')]);
+    }
+
+    /**
      * Generates a username for an account based on the provided domain name.
      * Server managers may define this function to provide their own method for username generation depending on the specifics of the server they are integrated with.
      *

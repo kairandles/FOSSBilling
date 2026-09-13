@@ -1539,3 +1539,84 @@ test('getOrderableHpPairs returns empty array when no products reference plans',
 
     expect($service->getOrderableHpPairs())->toBe([]);
 });
+
+test('getServerPackages pairs server packages with matching hosting plans by custom value, then by name', function (): void {
+    $linked = new ServiceHostingHp();
+    setEntityId($linked, 1);
+    $linked->setName('Old Basic');
+    $linked->setConfig(json_encode(['plan_id' => '3']));
+
+    $sameName = new ServiceHostingHp();
+    setEntityId($sameName, 2);
+    $sameName->setName('growth');
+    $sameName->setConfig(null);
+
+    $hpRepo = Mockery::mock(ServiceHostingHpRepository::class);
+    $hpRepo->shouldReceive('findAll')->once()->andReturn([$linked, $sameName]);
+
+    $emMock = Mockery::mock(EntityManagerInterface::class)->shouldIgnoreMissing();
+    $emMock->shouldReceive('getRepository')->with(ServiceHostingHp::class)->andReturn($hpRepo);
+
+    $managerMock = Mockery::mock('\Server_Manager_Custom');
+    $managerMock->shouldReceive('listPackages')->once()->andReturn([
+        ['id' => '3', 'name' => 'Basic', 'quota' => 7000, 'config' => ['plan_id' => '3']],
+        ['id' => '4', 'name' => 'Growth', 'quota' => null, 'config' => ['plan_id' => '4']],
+        ['id' => '5', 'name' => 'Professional', 'config' => ['plan_id' => '5']],
+    ]);
+
+    $di = container();
+    $di['em'] = $emMock;
+
+    $serviceMock = Mockery::mock(Service::class)->makePartial();
+    $serviceMock->shouldReceive('getServerManager')->once()->andReturn($managerMock);
+    $serviceMock->setDi($di);
+
+    $packages = $serviceMock->getServerPackages(new ServiceHostingServer());
+
+    expect(array_column($packages, 'matched_by'))->toBe(['config', 'name', null])
+        ->and(array_column($packages, 'hosting_plan_id'))->toBe([1, 2, null])
+        ->and($packages[0]['hosting_plan_name'])->toBe('Old Basic');
+});
+
+test('syncHostingPlans creates missing plans and leaves matching ones alone unless told to overwrite', function (bool $overwrite, int $expectedUpdates): void {
+    $existing = new ServiceHostingHp();
+    setEntityId($existing, 1);
+    $existing->setName('Basic');
+    $existing->setConfig(json_encode(['plan_id' => '3']));
+
+    $created = new ServiceHostingHp();
+    setEntityId($created, 9);
+
+    $hpRepo = Mockery::mock(ServiceHostingHpRepository::class);
+    $hpRepo->shouldReceive('findAll')->once()->andReturn([$existing]);
+    $hpRepo->shouldReceive('find')->with(1)->andReturn($existing);
+    $hpRepo->shouldReceive('find')->with(9)->andReturn($created);
+
+    $emMock = Mockery::mock(EntityManagerInterface::class)->shouldIgnoreMissing();
+    $emMock->shouldReceive('getRepository')->with(ServiceHostingHp::class)->andReturn($hpRepo);
+
+    $managerMock = Mockery::mock('\Server_Manager_Custom');
+    $managerMock->shouldReceive('listPackages')->once()->andReturn([
+        ['id' => '3', 'name' => 'Basic', 'quota' => 7000, 'max_ftp' => 3, 'config' => ['plan_id' => '3']],
+        ['id' => '4', 'name' => 'Growth', 'quota' => 20000, 'bandwidth' => null, 'config' => ['plan_id' => '4']],
+        ['id' => '5', 'name' => 'Skipped by selection', 'config' => ['plan_id' => '5']],
+    ]);
+
+    $di = container();
+    $di['em'] = $emMock;
+    $di['logger'] = new FOSSBilling\Logger();
+
+    $serviceMock = Mockery::mock(Service::class)->makePartial();
+    $serviceMock->shouldReceive('getServerManager')->once()->andReturn($managerMock);
+    $serviceMock->shouldReceive('updateHp')->times($expectedUpdates)->with($existing, ['config' => ['plan_id' => '3'], 'quota' => '7000', 'max_ftp' => '3', 'name' => 'Basic'])->andReturn(true);
+    $serviceMock->shouldReceive('createHp')->once()->with('Growth', ['config' => ['plan_id' => '4'], 'quota' => '20000', 'bandwidth' => 'unlimited'])->andReturn(9);
+    $serviceMock->shouldReceive('updateHp')->once()->with($created, ['config' => ['plan_id' => '4']])->andReturn(true);
+    $serviceMock->setDi($di);
+
+    $summary = $serviceMock->syncHostingPlans(new ServiceHostingServer(), ['3', '4'], $overwrite);
+
+    expect($summary)->toBe(['created' => 1, 'updated' => $expectedUpdates, 'skipped' => 1 - $expectedUpdates]);
+})->with([
+    'skip existing' => [false, 0],
+    'overwrite existing' => [true, 1],
+]);

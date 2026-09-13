@@ -5,6 +5,13 @@
 {% block meta_title %}{{ 'Hosting Plans and Servers'|trans }}{% endblock %}
 
 {% set active_menu = 'system' %}
+{% set servers = admin.servicehosting_server_get_list({ 'per_page': 100 }) %}
+{% set sync_servers = [] %}
+{% for server in servers.list %}
+    {% if server.supports_package_sync %}
+        {% set sync_servers = sync_servers|merge([server]) %}
+    {% endif %}
+{% endfor %}
 {% set new_server_action %}
     <button class="btn btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#newHostingServerModal">
         <svg class="icon">
@@ -14,6 +21,14 @@
     </button>
 {% endset %}
 {% set new_plan_action %}
+    {% if sync_servers|length > 0 %}
+        <button class="btn btn-outline-primary" type="button" data-bs-toggle="modal" data-bs-target="#syncHostingPlansModal">
+            <svg class="icon">
+                <use href="#refresh" />
+            </svg>
+            {{ 'Sync Plans'|trans }}
+        </button>
+    {% endif %}
     <button class="btn btn-primary" type="button" data-bs-toggle="modal" data-bs-target="#newHostingPlanModal">
         <svg class="icon">
             <use href="#plus" />
@@ -62,7 +77,6 @@
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    {% set servers = admin.servicehosting_server_get_list({ 'per_page': 100 }) %}
                                     {% for server in servers.list %}
                                     <tr>
                                         <td>{{ server.id }}</td>
@@ -109,7 +123,7 @@
 
                     <div class="tab-pane fade" id="tab-plans" role="tabpanel">
                         <div class="card-body border-bottom py-3">
-                            <div class="d-flex justify-content-end">
+                            <div class="d-flex justify-content-end gap-2">
                                 {{ new_plan_action|raw }}
                             </div>
                         </div>
@@ -134,8 +148,8 @@
                                             <a href='{{ "servicehosting/plan/#{hp.id}"|url }}'>{{ hp.name }}</a>
                                         </td>
                                         <td>{{ hp.max_addon }}</td>
-                                        <td>{{ hp.quota }} <span class="text-body-secondary">MB</span></td>
-                                        <td>{{ hp.bandwidth }} <span class="text-body-secondary">MB</span></td>
+                                        <td>{% if hp.quota == 'unlimited' %}{{ 'Unlimited'|trans }}{% else %}{{ hp.quota }} <span class="text-body-secondary">MB</span>{% endif %}</td>
+                                        <td>{% if hp.bandwidth == 'unlimited' %}{{ 'Unlimited'|trans }}{% else %}{{ hp.bandwidth }} <span class="text-body-secondary">MB</span>{% endif %}</td>
                                         <td>
                                             <a class="btn btn-icon" href='{{ "servicehosting/plan/#{hp.id}"|url }}' data-bs-toggle="tooltip" data-bs-placement="top" title="{{ 'Edit Plan Details'|trans }}">
                                                 <svg class="icon">
@@ -347,11 +361,149 @@
                 </form>
             </div>
         </div>
+
+        {% if sync_servers|length > 0 %}
+        <div class="modal modal-blur fade" id="syncHostingPlansModal" tabindex="-1" aria-labelledby="syncHostingPlansModalLabel" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-fullscreen-md-down modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h3 class="modal-title" id="syncHostingPlansModalLabel">{{ 'Sync Hosting Plans from Server'|trans }}</h3>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="{{ 'Close'|trans }}"></button>
+                    </div>
+                    <div class="modal-body">
+                        <section class="fb-modal-section">
+                            <div class="fb-modal-section-header">
+                                <div class="fb-modal-section-heading-row">
+                                    <h4 class="fb-modal-section-title">{{ 'Server'|trans }}</h4>
+                                </div>
+                                <p class="fb-modal-section-description">{{ 'The packages configured on the server become hosting plans with the same name and limits. Plans that already match a package are left unchanged unless you choose to overwrite them.'|trans }}</p>
+                            </div>
+                            <div class="row g-3">
+                                <div class="col-md-8">
+                                    <label class="form-label" for="sync-plans-server">{{ 'Server'|trans }}</label>
+                                    <select class="form-select" id="sync-plans-server">
+                                        {% for server in sync_servers %}
+                                            <option value="{{ server.id }}">{{ server.name }} ({{ server.manager }})</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="col-md-4 d-flex align-items-end">
+                                    <button class="btn btn-secondary w-100" type="button" id="sync-plans-load">{{ 'Load packages'|trans }}</button>
+                                </div>
+                            </div>
+                        </section>
+                        <section class="fb-modal-section" id="sync-plans-results" hidden>
+                            <div class="table-responsive">
+                                <table class="table table-vcenter card-table">
+                                    <thead>
+                                        <tr>
+                                            <th class="w-1"><input class="form-check-input m-0 align-middle" type="checkbox" id="sync-plans-all" checked aria-label="{{ 'Select all'|trans }}"></th>
+                                            <th>{{ 'Package'|trans }}</th>
+                                            <th>{{ 'Disk quota'|trans }}</th>
+                                            <th>{{ 'Bandwidth'|trans }}</th>
+                                            <th>{{ 'Hosting plan'|trans }}</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="sync-plans-rows"></tbody>
+                                </table>
+                            </div>
+                            <div class="mt-3">
+                                <label class="form-label">{{ 'Plans that already match a package'|trans }}</label>
+                                <div class="d-flex flex-wrap gap-3">
+                                    <label class="form-check">
+                                        <input class="form-check-input" type="radio" name="sync-plans-overwrite" value="0" checked>
+                                        <span class="form-check-label">{{ 'Leave unchanged'|trans }}</span>
+                                    </label>
+                                    <label class="form-check">
+                                        <input class="form-check-input" type="radio" name="sync-plans-overwrite" value="1">
+                                        <span class="form-check-label">{{ 'Overwrite name and limits'|trans }}</span>
+                                    </label>
+                                </div>
+                            </div>
+                        </section>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">{{ 'Cancel'|trans }}</button>
+                        <button type="button" class="btn btn-primary" id="sync-plans-submit" disabled>{{ 'Sync selected'|trans }}</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endif %}
     </div>
 {% endblock %}
 
 {% block js %}
 <script>
+    (function () {
+        const modal = document.getElementById('syncHostingPlansModal');
+        if (!modal) {
+            return;
+        }
+
+        const serverSelect = document.getElementById('sync-plans-server');
+        const results = document.getElementById('sync-plans-results');
+        const rows = document.getElementById('sync-plans-rows');
+        const submit = document.getElementById('sync-plans-submit');
+        const selectAll = document.getElementById('sync-plans-all');
+        const escapeHtml = (value) => String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+        const limit = (value) => (value === null || value === undefined || value === '') ? {{ 'Unlimited'|trans|json_encode|raw }} : escapeHtml(value) + ' MB';
+
+        document.getElementById('sync-plans-load').addEventListener('click', () => {
+            rows.innerHTML = '';
+            results.hidden = true;
+            submit.disabled = true;
+
+            FOSSBilling.api.admin.get('servicehosting/server_get_packages', { id: serverSelect.value }, (packages) => {
+                packages.forEach((pkg) => {
+                    let status = '<span class="badge bg-green-lt">' + {{ 'New'|trans|json_encode|raw }} + '</span>';
+                    if (pkg.hosting_plan_id) {
+                        const label = pkg.matched_by === 'config' ? {{ 'Linked to'|trans|json_encode|raw }} : {{ 'Same name as'|trans|json_encode|raw }};
+                        status = '<span class="badge bg-azure-lt">' + label + ' ' + escapeHtml(pkg.hosting_plan_name) + '</span>';
+                    }
+
+                    const row = document.createElement('tr');
+                    row.innerHTML = '<td><input class="form-check-input m-0 align-middle" type="checkbox" value="' + escapeHtml(pkg.id) + '" checked></td>'
+                        + '<td>' + escapeHtml(pkg.name) + '</td>'
+                        + '<td>' + limit(pkg.quota) + '</td>'
+                        + '<td>' + limit(pkg.bandwidth) + '</td>'
+                        + '<td>' + status + '</td>';
+                    rows.appendChild(row);
+                });
+
+                results.hidden = packages.length === 0;
+                submit.disabled = packages.length === 0;
+                selectAll.checked = true;
+                if (packages.length === 0) {
+                    FOSSBilling.message({{ 'No packages were found on this server'|trans|json_encode|raw }}, 'error');
+                }
+            });
+        });
+
+        selectAll.addEventListener('change', () => {
+            rows.querySelectorAll('input[type="checkbox"]').forEach((box) => { box.checked = selectAll.checked; });
+        });
+
+        submit.addEventListener('click', () => {
+            const packages = Array.from(rows.querySelectorAll('input[type="checkbox"]:checked')).map((box) => box.value);
+            if (packages.length === 0) {
+                return;
+            }
+
+            submit.disabled = true;
+            FOSSBilling.api.admin.post('servicehosting/hp_sync', {
+                server_id: serverSelect.value,
+                packages: packages,
+                overwrite: modal.querySelector('input[name="sync-plans-overwrite"]:checked').value,
+            }, (summary) => {
+                FOSSBilling.message({{ 'Hosting plans synced'|trans|json_encode|raw }} + ': ' + summary.created + ' ' + {{ 'created'|trans|json_encode|raw }} + ', ' + summary.updated + ' ' + {{ 'updated'|trans|json_encode|raw }} + ', ' + summary.skipped + ' ' + {{ 'skipped'|trans|json_encode|raw }});
+                setTimeout(() => window.location.reload(), 1200);
+            }, () => {
+                submit.disabled = false;
+            });
+        });
+    })();
+
     function onAfterHostingPlanCreate(id) {
         window.location = "{{ 'servicehosting/plan'|url }}/" + id;
     }

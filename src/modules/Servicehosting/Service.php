@@ -631,6 +631,7 @@ class Service implements InjectionAwareInterface
             $result['status_url'] = $model->getStatusUrl();
             $result['max_accounts'] = $model->getMaxAccounts();
             $result['manager'] = $model->getManager();
+            $result['supports_package_sync'] = $this->serverSupportsPackageSync($model);
             $result['config'] = json_decode($model->getConfig() ?? '', true) ?? [];
             $result['port'] = Tools::normalizePort($model->getPort());
             $result['passwordLength'] = $model->getPasswordLength();
@@ -1309,6 +1310,141 @@ class Service implements InjectionAwareInterface
         $this->di['logger']->info('Added new hosting plan {plan_id}', ['plan_id' => $newId]);
 
         return $newId;
+    }
+
+    public function serverSupportsPackageSync(ServiceHostingServer $server): bool
+    {
+        $class = $this->getServerManagerClass((string) $server->getManager());
+
+        return $class !== null && $class::supportsPackageSync();
+    }
+
+    /**
+     * Packages configured on the server, each with the hosting plan it already corresponds to, if any.
+     * A plan matches by the package's custom values first and by name second.
+     */
+    public function getServerPackages(ServiceHostingServer $server): array
+    {
+        $plans = $this->getServiceHostingHpRepository()->findAll();
+        $packages = [];
+        foreach ($this->getServerManager($server)->listPackages() as $package) {
+            [$plan, $matchedBy] = $this->findHostingPlanForPackage($plans, $package);
+            $package['hosting_plan_id'] = $plan?->getId();
+            $package['hosting_plan_name'] = $plan?->getName();
+            $package['matched_by'] = $matchedBy;
+            $packages[] = $package;
+        }
+
+        return $packages;
+    }
+
+    /**
+     * Creates hosting plans for the given server packages and, when asked to, updates the plans that already match one.
+     *
+     * @param list<string> $packageIds package IDs to sync; all packages when empty
+     *
+     * @return array{created: int, updated: int, skipped: int}
+     */
+    public function syncHostingPlans(ServiceHostingServer $server, array $packageIds, bool $overwrite): array
+    {
+        $summary = ['created' => 0, 'updated' => 0, 'skipped' => 0];
+        $limits = ['quota', 'bandwidth', 'max_addon', 'max_sub', 'max_park', 'max_ftp', 'max_sql', 'max_pop'];
+
+        foreach ($this->getServerPackages($server) as $package) {
+            if ($packageIds !== [] && !in_array((string) $package['id'], $packageIds, true)) {
+                continue;
+            }
+
+            $data = ['config' => $package['config'] ?? []];
+            foreach ($limits as $limit) {
+                if (array_key_exists($limit, $package)) {
+                    $data[$limit] = $package[$limit] === null ? 'unlimited' : (string) $package[$limit];
+                }
+            }
+
+            if ($package['hosting_plan_id'] !== null) {
+                if (!$overwrite) {
+                    ++$summary['skipped'];
+
+                    continue;
+                }
+
+                $plan = $this->getServiceHostingHpRepository()->find($package['hosting_plan_id']);
+                if ($plan instanceof ServiceHostingHp) {
+                    $this->updateHp($plan, $data + ['name' => $package['name']]);
+                    ++$summary['updated'];
+                }
+
+                continue;
+            }
+
+            $id = $this->createHp($package['name'], $data);
+            $plan = $id !== null ? $this->getServiceHostingHpRepository()->find($id) : null;
+            if ($plan instanceof ServiceHostingHp && $data['config'] !== []) {
+                $this->updateHp($plan, ['config' => $data['config']]);
+            }
+            ++$summary['created'];
+        }
+
+        $this->di['logger']->info('Synced hosting plans from server {server_id}: {created} created, {updated} updated, {skipped} skipped', ['server_id' => $server->getId()] + $summary);
+
+        return $summary;
+    }
+
+    /**
+     * @param ServiceHostingHp[] $plans
+     *
+     * @return array{0: ?ServiceHostingHp, 1: ?string}
+     */
+    private function findHostingPlanForPackage(array $plans, array $package): array
+    {
+        $config = $package['config'] ?? [];
+        if ($config !== []) {
+            foreach ($plans as $plan) {
+                $planConfig = json_decode($plan->getConfig() ?? '', true) ?? [];
+                foreach ($config as $key => $value) {
+                    if ((string) ($planConfig[$key] ?? '') !== (string) $value) {
+                        continue 2;
+                    }
+                }
+
+                return [$plan, 'config'];
+            }
+        }
+
+        foreach ($plans as $plan) {
+            if (strcasecmp((string) $plan->getName(), (string) $package['name']) === 0) {
+                return [$plan, 'name'];
+            }
+        }
+
+        return [null, null];
+    }
+
+    /**
+     * @return class-string<\Server_Manager>|null
+     */
+    private function getServerManagerClass(string $manager): ?string
+    {
+        if (!in_array($manager, $this->_getServerManagers(), true)) {
+            return null;
+        }
+
+        $classname = 'Server_Manager_' . $manager;
+        if (!class_exists($classname)) {
+            $filename = Path::join(PATH_LIBRARY, 'Server', 'Manager', "{$manager}.php");
+            if (!$this->filesystem->exists($filename)) {
+                return null;
+            }
+
+            try {
+                require_once $filename;
+            } catch (\Throwable) {
+                return null;
+            }
+        }
+
+        return is_subclass_of($classname, \Server_Manager::class) ? $classname : null;
     }
 
     public function getServerPackage(ServiceHostingHp $model): \Server_Package

@@ -457,6 +457,36 @@ class Admin extends \FOSSBilling\Api\AbstractApi
         return (int) $service->createHp($data['name'], $data);
     }
 
+    /**
+     * Get the packages configured on a hosting server, with the hosting plan each one already matches.
+     */
+    #[RequiredParams(['id' => 'Server ID was not passed'])]
+    public function server_get_packages($data): array
+    {
+        $this->checkPermissions('servicehosting', 'manage_plans');
+        $model = $this->_getServer((int) $data['id']);
+
+        return $this->getService()->getServerPackages($model);
+    }
+
+    /**
+     * Create hosting plans from the packages configured on a hosting server.
+     *
+     * @optional array $packages - package IDs to sync. All packages when omitted
+     * @optional bool $overwrite - also update hosting plans that already match a package. Default: false
+     *
+     * @return array counts of created, updated and skipped hosting plans
+     */
+    #[RequiredParams(['server_id' => 'Server ID was not passed'])]
+    public function hp_sync($data): array
+    {
+        $this->checkPermissions('servicehosting', 'manage_plans');
+        $model = $this->_getServer((int) $data['server_id']);
+        $packages = array_values(array_map(strval(...), (array) ($data['packages'] ?? [])));
+
+        return $this->getService()->syncHostingPlans($model, $packages, Tools::normalizeBoolean($data['overwrite'] ?? false));
+    }
+
     public function _getService($data): array
     {
         $required = [

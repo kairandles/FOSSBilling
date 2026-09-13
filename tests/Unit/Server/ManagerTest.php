@@ -21,3 +21,8 @@ test('getPasswordLength coerces a numeric string to int', function (): void {
 
     expect($manager->getPasswordLength())->toBe(12);
 });
+
+test('package sync is opt-in for server managers', function (): void {
+    expect(Server_Manager_Custom::supportsPackageSync())->toBeFalse()
+        ->and(fn (): array => (new Server_Manager_Custom([]))->listPackages())->toThrow(Server_Exception::class, 'does not support');
+});

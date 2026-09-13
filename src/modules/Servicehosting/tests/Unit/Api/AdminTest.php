@@ -746,3 +746,47 @@ test('testGetServiceOrderNotActivated', function (): void {
     $this->expectExceptionMessage('Order is not activated');
     $api->_getService($data);
 });
+
+test('server_get_packages returns the packages the service resolves for the server', function (): void {
+    $api = apiEndpoint(new Admin());
+    $server = new ServiceHostingServer();
+    setEntityId($server, 1);
+
+    $serverRepo = Mockery::mock(ServiceHostingServerRepository::class);
+    $serverRepo->shouldReceive('find')->with(1)->once()->andReturn($server);
+    $emMock = Mockery::mock(EntityManagerInterface::class)->shouldIgnoreMissing();
+    $emMock->shouldReceive('getRepository')->with(ServiceHostingServer::class)->andReturn($serverRepo);
+
+    $packages = [['id' => '3', 'name' => 'Basic', 'hosting_plan_id' => null, 'matched_by' => null]];
+    $serviceMock = Mockery::mock(Service::class);
+    $serviceMock->shouldReceive('getServerPackages')->once()->with($server)->andReturn($packages);
+
+    $di = container();
+    $di['em'] = $emMock;
+    $api->setDi($di);
+    $api->setService($serviceMock);
+
+    expect($api->server_get_packages(['id' => 1]))->toBe($packages);
+});
+
+test('hp_sync normalizes the selected package ids and the overwrite flag before syncing', function (): void {
+    $api = apiEndpoint(new Admin());
+    $server = new ServiceHostingServer();
+    setEntityId($server, 1);
+
+    $serverRepo = Mockery::mock(ServiceHostingServerRepository::class);
+    $serverRepo->shouldReceive('find')->with(1)->once()->andReturn($server);
+    $emMock = Mockery::mock(EntityManagerInterface::class)->shouldIgnoreMissing();
+    $emMock->shouldReceive('getRepository')->with(ServiceHostingServer::class)->andReturn($serverRepo);
+
+    $summary = ['created' => 2, 'updated' => 0, 'skipped' => 1];
+    $serviceMock = Mockery::mock(Service::class);
+    $serviceMock->shouldReceive('syncHostingPlans')->once()->with($server, ['3', '4'], true)->andReturn($summary);
+
+    $di = container();
+    $di['em'] = $emMock;
+    $api->setDi($di);
+    $api->setService($serviceMock);
+
+    expect($api->hp_sync(['server_id' => '1', 'packages' => [3, '4'], 'overwrite' => '1']))->toBe($summary);
+});
