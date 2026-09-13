@@ -534,6 +534,32 @@ test('synchronizeAccount leaves the IP alone when the website reports none', fun
     expect(createEnhanceManager($client)->synchronizeAccount(createEnhanceAccount())->getIp())->toBe('10.0.0.1');
 });
 
+test('listPackages maps Enhance plan resources onto hosting plan limits', function (): void {
+    $plans = [
+        ['id' => 3, 'name' => 'Basic', 'resources' => [
+            ['name' => 'diskspace', 'total' => 7000000000],
+            ['name' => 'transfer', 'total' => null],
+            ['name' => 'websites', 'total' => 1],
+            ['name' => 'addonDomains', 'total' => 2],
+            ['name' => 'subdomains', 'total' => 5],
+            ['name' => 'domainAliases', 'total' => 0],
+            ['name' => 'ftpUsers', 'total' => 3],
+            ['name' => 'mysqlDbs', 'total' => 4],
+            ['name' => 'mailboxes', 'total' => 10],
+        ]],
+        ['id' => 4, 'name' => 'Growth', 'resources' => []],
+    ];
+    $requests = [];
+    $manager = createEnhanceManager(enhanceClient($requests, ['plans' => $plans]));
+
+    expect(Server_Manager_Enhance::supportsPackageSync())->toBeTrue()
+        ->and($manager->listPackages())->toBe([
+            ['id' => '3', 'name' => 'Basic', 'quota' => 7000, 'bandwidth' => null, 'max_addon' => 2, 'max_sub' => 5, 'max_park' => 0, 'max_ftp' => 3, 'max_sql' => 4, 'max_pop' => 10, 'config' => ['plan_id' => '3']],
+            ['id' => '4', 'name' => 'Growth', 'quota' => null, 'bandwidth' => null, 'max_addon' => null, 'max_sub' => null, 'max_park' => null, 'max_ftp' => null, 'max_sql' => null, 'max_pop' => null, 'config' => ['plan_id' => '4']],
+        ])
+        ->and(enhanceRoutes($requests))->toBe(['GET /orgs/' . enhanceOrgId() . '/plans']);
+});
+
 test('username and IP changes are reported as unsupported', function (): void {
     $requests = [];
     $manager = createEnhanceManager(enhanceClient($requests));

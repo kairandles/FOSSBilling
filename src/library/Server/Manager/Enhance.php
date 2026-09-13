@@ -111,6 +111,11 @@ class Server_Manager_Enhance extends Server_Manager
         return $this->baseUrl() . '/';
     }
 
+    public static function supportsPackageSync(): bool
+    {
+        return true;
+    }
+
     public function getPort(): int
     {
         return (int) ($this->_config['port'] ?? self::DEFAULT_PORT);
@@ -125,6 +130,42 @@ class Server_Manager_Enhance extends Server_Manager
         }
 
         return true;
+    }
+
+    /**
+     * Enhance plans carry many settings FOSSBilling has no field for, so only the limits that line up are mapped.
+     */
+    public function listPackages(): array
+    {
+        $packages = [];
+        foreach ($this->paginate($this->orgPath('/plans')) as $plan) {
+            if (!isset($plan['id'], $plan['name'])) {
+                continue;
+            }
+
+            $totals = [];
+            foreach ($plan['resources'] ?? [] as $resource) {
+                if (isset($resource['name'])) {
+                    $totals[$resource['name']] = $resource['total'] ?? null;
+                }
+            }
+
+            $packages[] = [
+                'id' => (string) $plan['id'],
+                'name' => (string) $plan['name'],
+                'quota' => $this->megabytes($totals['diskspace'] ?? null),
+                'bandwidth' => $this->megabytes($totals['transfer'] ?? null),
+                'max_addon' => $this->limit($totals['addonDomains'] ?? null),
+                'max_sub' => $this->limit($totals['subdomains'] ?? null),
+                'max_park' => $this->limit($totals['domainAliases'] ?? null),
+                'max_ftp' => $this->limit($totals['ftpUsers'] ?? null),
+                'max_sql' => $this->limit($totals['mysqlDbs'] ?? null),
+                'max_pop' => $this->limit($totals['mailboxes'] ?? null),
+                'config' => ['plan_id' => (string) $plan['id']],
+            ];
+        }
+
+        return $packages;
     }
 
     /**
@@ -499,6 +540,16 @@ class Server_Manager_Enhance extends Server_Manager
         }
 
         return $first;
+    }
+
+    private function megabytes(mixed $bytes): ?int
+    {
+        return is_numeric($bytes) ? (int) round((float) $bytes / 1_000_000) : null;
+    }
+
+    private function limit(mixed $value): ?int
+    {
+        return is_numeric($value) ? (int) $value : null;
     }
 
     private function clientEmail(Server_Account $account): string

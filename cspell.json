@@ -500,6 +500,7 @@
         "zindex",
         "CHARSETS",
         "diskimage",
+        "diskspace",
         "matroska",
         "msdownload",
         "msvideo",
